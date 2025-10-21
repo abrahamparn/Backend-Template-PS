@@ -1,0 +1,209 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model with improved relations and field names
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  username          String    @unique
+  name              String
+  profilePictureUrl String?   @map("profile_picture_url")
+  phoneNumber       String?   @map("phone_number")
+  passwordHash      String    @map("password_hash")
+  status            Status    @default(ACTIVE)
+
+
+  // RBAC relation
+  roleId           String    @map("role_id")
+  role             Role      @relation(fields: [roleId], references: [id])
+  
+
+  // Timestamps
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  lastLoginAt       DateTime? @map("last_login_at")
+  
+  // email verification
+  emailVerifiedAt   DateTime? @map("email_verified_at") // Replaces verifiedEmail/verifiedUser booleans
+
+  // Auth & Versioning
+  refreshTokenHash    String?   @unique @map("refresh_token_hash")
+  refreshTokenVersion Int       @default(0) @map("refresh_token_version") // For refresh token invalidation
+  userVersion         Int       @default(0) @map("user_version") // For access token invalidation on role/permission changes
+
+  // verification token
+  verificationToken String? @unique @map("verification_token")
+  verificationExpiresAt DateTime? @map("verification_expires_at")
+
+  // OTP
+  otpCode      String?   @map("otp_code")
+  otpExpiresAt DateTime? @map("otp_expires_at")
+  otpVersion   Int       @default(0) @map("otp_version")
+
+  // Password Reset
+  passwordResetToken   String?   @unique @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires_at")
+
+  // Soft Delete
+  deletedAt       DateTime? @map("deleted_at")
+  deletedByUserId String?   @map("deleted_by_user_id")
+  deletedBy       User?     @relation("UsersDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
+
+  // Audit Trail - Who updated this user?
+  updatedByUserId String?   @map("updated_by_user_id")
+  updatedBy       User?     @relation("UsersUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  // Relations to track actions performed BY this user
+  // These fields replace the problematic `deletedUsers` and `updatedUsers` lists
+  actionsAsDeleter  User[]    @relation("UsersDeletedBy")
+  actionsAsUpdater  User[]    @relation("UsersUpdatedBy")
+  logsAsActor       UserLog[] @relation("LogsByActor")
+
+  // Relation to logs ABOUT this user
+  logsAboutUser UserLog[] @relation("LogsAboutTargetUser")
+
+
+  userPermissions  UserPermission[]
+
+
+  @@map("users")
+  @@index([email])
+  @@index([username])
+  @@index([status])
+}
+
+model Role {
+  id String @id @default(uuid())
+  name String @unique // ADMIN, EDITOR, VIEWER, etc.
+  description String?
+  isSystem Boolean @default(false) // Prevent deletion of core roles
+  priority Int @default(0) // For role hierarchy (higher = more power)
+
+  users User[]
+  permissions RolePermission[]
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+
+  @@map("roles")
+  @@index([name])
+  @@index([priority])
+}
+
+model Permission{
+  id          String   @id @default(uuid())
+  resource    String   // "assets", "invoices", "posts", etc.
+  action      String   // "create", "read", "update", "delete", "approve", etc.
+  code        String   @unique  // "assets:create", "invoices:approve"
+
+
+  // Metadata (for flexibility)
+  description String?
+  category    String?  // "content", "financial", "system", etc.
+  
+  roles       RolePermission[]
+  users       UserPermission[]
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  @@unique([resource, action])
+  @@map("permissions")
+  @@index([code])
+  @@index([resource])
+  @@index([category])
+}
+
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String     @map("role_id")
+  permissionId String     @map("permission_id")
+  
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  
+  createdAt    DateTime   @default(now()) @map("created_at")
+  
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+
+model UserPermission {
+  id           String     @id @default(uuid())
+  userId       String     @map("user_id")
+  permissionId String     @map("permission_id")
+  
+  granted      Boolean    @default(true)  // true = grant, false = revoke
+  grantedBy    String?    @map("granted_by")
+  reason       String?
+  expiresAt    DateTime?  @map("expires_at")
+  
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  
+  @@unique([userId, permissionId])
+  @@map("user_permissions")
+  @@index([userId])
+  @@index([permissionId])
+}
+
+
+
+// UserLog model with proper relations and structure
+model UserLog {
+  id          String         @id @default(uuid())
+  action      UserActionType // What action was performed?
+  changedData Json?          @map("changed_data") // Use JSON for structured change data
+
+  // Who performed the action?
+  actorId     String?        @map("actor_id")
+  actor       User?          @relation("LogsByActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  // Which user was this action about?
+  targetUserId String         @map("target_user_id")
+  targetUser   User           @relation("LogsAboutTargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  // Timestamp
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@map("user_logs")
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+  // The DELETED status is often redundant when using a soft-delete pattern (deletedAt).
+  // Consider removing it unless you have a specific use case for it alongside soft-deleting.
+  DELETED
+}
+
+// Enum for tracking specific actions in the log
+enum UserActionType {
+  USER_CREATED
+  USER_UPDATED_PROFILE
+  USER_UPDATED_ROLE
+  USER_UPDATED_STATUS
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+  PASSWORD_CHANGED
+  EMAIL_VERIFIED
+  USER_SOFT_DELETED
+  USER_RESTORED
+}
