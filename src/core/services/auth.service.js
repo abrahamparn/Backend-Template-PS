@@ -120,7 +120,7 @@ export function makeAuthService({
       try {
         decoded = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET);
       } catch (error) {
-        throw new UnauthorizedError("Invalid refresh token");
+        throw new UnauthorizedError("Error at decoding refresh token");
       }
 
       const user = await authRepository.findById(decoded.userId);

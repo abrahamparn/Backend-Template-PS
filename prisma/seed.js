@@ -6,6 +6,14 @@ dotenv.config();
 
 const prisma = new PrismaClient();
 
+function pickRandom(array) {
+  return array[Math.floor(Math.random() * array.length)];
+}
+
+function randomDateBetween(start, end) {
+  return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+}
+
 async function main() {
   console.log("🌱 Starting database seeding...");
 
@@ -763,95 +771,194 @@ async function main() {
   // ============================================
   // STEP 6: Create User Logs
   // ============================================
-  console.log("📝 Creating user logs...");
-  await prisma.userLog.createMany({
-    data: [
-      {
-        action: "USER_CREATED",
-        targetUserId: superAdmin.id,
-        actorId: superAdmin.id,
-        changedData: {
-          message: "Super Admin account created during seeding",
-          role: "Super Admin",
-        },
-      },
-      {
-        action: "USER_CREATED",
-        targetUserId: admin.id,
-        actorId: superAdmin.id,
-        changedData: {
-          message: "Admin account created during seeding",
-          role: "Admin",
-        },
-      },
-      {
-        action: "USER_CREATED",
-        targetUserId: manager.id,
-        actorId: superAdmin.id,
-        changedData: {
-          message: "Manager account created during seeding",
-          role: "Manager",
-        },
-      },
-      {
-        action: "USER_CREATED",
-        targetUserId: editor.id,
-        actorId: admin.id,
-        changedData: {
-          message: "Editor account created during seeding",
-          role: "Editor",
-        },
-      },
-      {
-        action: "USER_CREATED",
-        targetUserId: accountant.id,
-        actorId: admin.id,
-        changedData: {
-          message: "Accountant account created during seeding",
-          role: "Accountant",
-        },
-      },
-      {
-        action: "USER_CREATED",
-        targetUserId: user1.id,
-        actorId: admin.id,
-        changedData: {
-          message: "Regular user account created during seeding",
-          role: "User",
-        },
-      },
-      {
-        action: "EMAIL_VERIFIED",
-        targetUserId: user1.id,
-        actorId: user1.id,
-        changedData: {
-          message: "Email verified during account creation",
-        },
-      },
-      {
-        action: "USER_UPDATED_ROLE",
-        targetUserId: user1.id,
-        actorId: superAdmin.id,
-        changedData: {
-          message: "Temporary permission granted: posts:create",
-          permission: "posts:create",
-          granted: true,
-          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        },
-      },
-      {
-        action: "USER_UPDATED_ROLE",
-        targetUserId: user2.id,
-        actorId: superAdmin.id,
-        changedData: {
-          message: "Permission revoked: invoices:view",
-          permission: "invoices:view",
-          granted: false,
-        },
-      },
-    ],
+  console.log("📝 Creating user logs (v2.0)...");
+
+  const allUsers = [
+    superAdmin,
+    admin,
+    manager,
+    editor,
+    accountant,
+    user1,
+    user2,
+    testUser,
+    inactiveUser,
+  ];
+
+  const roleNameById = {
+    [superAdminRole.id]: superAdminRole.name,
+    [adminRole.id]: adminRole.name,
+    [managerRole.id]: managerRole.name,
+    [editorRole.id]: editorRole.name,
+    [accountantRole.id]: accountantRole.name,
+    [userRole.id]: userRole.name,
+  };
+
+  const actorPool = [superAdmin, admin, manager, editor, accountant];
+  const actionTypes = [
+    "USER_CREATED",
+    "USER_UPDATED_PROFILE",
+    "USER_UPDATED_ROLE",
+    "USER_UPDATED_STATUS",
+    "PASSWORD_RESET_REQUESTED",
+    "PASSWORD_RESET_COMPLETED",
+    "PASSWORD_CHANGED",
+    "EMAIL_VERIFIED",
+    "USER_SOFT_DELETED",
+    "USER_RESTORED",
+  ];
+
+  const statsRangeEnd = new Date();
+  const statsRangeStart = new Date(statsRangeEnd);
+  statsRangeStart.setUTCDate(statsRangeStart.getUTCDate() - 120);
+
+  const buildChangedData = (action, { user, actor, createdAt }) => {
+    const roleName = roleNameById[user.roleId] ?? "User";
+    const actorInfo = actor
+      ? {
+          id: actor.id,
+          name: actor.name,
+          username: actor.username,
+        }
+      : null;
+
+    switch (action) {
+      case "USER_CREATED":
+        return {
+          message: `${roleName} account provisioned`,
+          source: "seed",
+          role: roleName,
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      case "USER_UPDATED_PROFILE":
+        return {
+          message: "Profile information updated",
+          updatedFields: ["name", "phoneNumber", "profilePictureUrl"].slice(
+            0,
+            1 + Math.floor(Math.random() * 3)
+          ),
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      case "USER_UPDATED_ROLE": {
+        const possibleRoles = Object.values(roleNameById).filter((name) => name !== roleName);
+        const previousRole = possibleRoles.length ? pickRandom(possibleRoles) : roleName;
+        return {
+          message: `Role changed from ${previousRole} to ${roleName}`,
+          previousRole,
+          newRole: roleName,
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      }
+      case "USER_UPDATED_STATUS": {
+        const statuses = ["ACTIVE", "INACTIVE", "DELETED"];
+        const fromStatus = pickRandom(statuses.filter((status) => status !== user.status));
+        return {
+          message: `Status updated to ${user.status}`,
+          previousStatus: fromStatus,
+          newStatus: user.status,
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      }
+      case "PASSWORD_RESET_REQUESTED":
+        return {
+          message: "Password reset requested",
+          deliveryMethod: pickRandom(["email", "sms"]),
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      case "PASSWORD_RESET_COMPLETED":
+        return {
+          message: "Password reset completed",
+          completedAt: createdAt.toISOString(),
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      case "PASSWORD_CHANGED":
+        return {
+          message: "Password updated",
+          initiatedBy: actor && actor.id !== user.id ? "admin" : "self-service",
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      case "EMAIL_VERIFIED":
+        return {
+          message: "Email verified",
+          verifiedAt: (user.emailVerifiedAt ?? createdAt).toISOString(),
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      case "USER_SOFT_DELETED":
+        return {
+          message: "Soft deletion flagged (demo data)",
+          deletedAt: createdAt.toISOString(),
+          reason: pickRandom(["User request", "Policy violation", "Dormant account"]),
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      case "USER_RESTORED":
+        return {
+          message: "User restored (demo data)",
+          restoredAt: createdAt.toISOString(),
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+      default:
+        return {
+          message: "Activity recorded",
+          actor: actorInfo,
+          target: { id: user.id, name: user.name, username: user.username },
+        };
+    }
+  };
+
+  const userLogEntries = [];
+
+  allUsers.forEach((user) => {
+    actionTypes.forEach((action) => {
+      const createdAt = randomDateBetween(statsRangeStart, statsRangeEnd);
+      const actor =
+        action === "USER_CREATED"
+          ? pickRandom([superAdmin, admin])
+          : Math.random() < 0.2
+            ? user
+            : pickRandom(actorPool);
+
+      userLogEntries.push({
+        action,
+        targetUserId: user.id,
+        actorId: actor?.id ?? null,
+        changedData: buildChangedData(action, { user, actor, createdAt }),
+        createdAt,
+      });
+    });
+
+    const extraLogCount = 10 + Math.floor(Math.random() * 15); // 10-24 extra logs
+    for (let i = 0; i < extraLogCount; i += 1) {
+      const action = pickRandom(actionTypes);
+      const createdAt = randomDateBetween(statsRangeStart, statsRangeEnd);
+      const actor =
+        Math.random() < 0.25 ? null : Math.random() < 0.4 ? user : pickRandom(actorPool);
+
+      userLogEntries.push({
+        action,
+        targetUserId: user.id,
+        actorId: actor?.id ?? null,
+        changedData: buildChangedData(action, { user, actor, createdAt }),
+        createdAt,
+      });
+    }
   });
-  console.log("✅ Created user logs");
+
+  await prisma.userLog.createMany({
+    data: userLogEntries,
+  });
+
+  const totalUserLogs = userLogEntries.length;
+  console.log(`✅ Created ${totalUserLogs} user logs across ${allUsers.length} users`);
 
   console.log("\n🎉 Seeding completed successfully!\n");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -864,6 +971,7 @@ async function main() {
   );
   console.log(`   • 6 Roles (Super Admin, Admin, Manager, Editor, Accountant, User)`);
   console.log(`   • 9 Users with assigned roles`);
+  console.log(`   • ${totalUserLogs} User logs spanning the last 120 days`);
   console.log(`   • 2 User permission overrides (1 grant, 1 revoke)\n`);
 
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

@@ -104,6 +104,17 @@ export function makeRbacRepository({ prisma }) {
     },
 
     /**
+     * Find permission by ID
+     * @param {string} id - Permission ID
+     * @returns {Promise<object|null>}
+     */
+    async findPermissionById(id) {
+      return prisma.permission.findUnique({
+        where: { id },
+      });
+    },
+
+    /**
      * List all permissions
      * @param {object} filters - Optional filters
      * @returns {Promise<Array>}
